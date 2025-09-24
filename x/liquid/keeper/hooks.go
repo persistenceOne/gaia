@@ -19,7 +19,7 @@ var (
 	// while unstaking (undelegate) -> hooks are called either of these orders:
 	// BeforeDelegationModified -> BeforeDelegationRemoved
 	// BeforeDelegationModified -> AfterDelegationModified
-
+	// TODO move to transient store in keeper
 	predelegation *stakingtypes.Delegation = nil
 )
 
@@ -53,10 +53,10 @@ func (h Hooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val
 
 func (h Hooks) BeforeDelegationCreated(_ context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if predelegation != nil {
-			return types.ErrPreHookIsNotNil
-		}
-
+		//if predelegation != nil {
+		//	return types.ErrPreHookIsNotNil
+		//}
+		// igore check for predelegation as it might have been set and errored out, can be added when the var is transient store
 		predelegation = &stakingtypes.Delegation{
 			DelegatorAddress: delAddr.String(),
 			ValidatorAddress: valAddr.String(),
@@ -68,10 +68,10 @@ func (h Hooks) BeforeDelegationCreated(_ context.Context, delAddr sdk.AccAddress
 
 func (h Hooks) BeforeDelegationSharesModified(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if predelegation != nil {
-			return types.ErrPreHookIsNotNil
-		}
-
+		//if predelegation != nil {
+		//	return types.ErrPreHookIsNotNil
+		//}
+		// igore check for predelegation as it might have been set and errored out, can be added when the var is transient store
 		predel, err := h.k.stakingKeeper.GetDelegation(ctx, delAddr, valAddr)
 		if err != nil {
 			return err
@@ -86,6 +86,8 @@ func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddre
 		if predelegation == nil {
 			return types.ErrPreHookIsNil
 		}
+		// reset prehook
+		defer func() { predelegation = nil }()
 		del, err := h.k.stakingKeeper.GetDelegation(ctx, delAddr, valAddr)
 		if err != nil {
 			return err
@@ -125,9 +127,6 @@ func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddre
 		} else {
 			return types.ErrInvalidHookInvocation
 		}
-
-		// reset prehook
-		predelegation = nil
 	}
 	return nil
 }
@@ -172,6 +171,8 @@ func (h Hooks) BeforeDelegationRemoved(ctx context.Context, delAddr sdk.AccAddre
 		if predelegation == nil {
 			return types.ErrPreHookIsNil
 		}
+		// reset prehook
+		defer func() { predelegation = nil }()
 		// is unbonding.
 		validator, err := h.k.stakingKeeper.GetValidator(ctx, valAddr)
 		if err != nil {
