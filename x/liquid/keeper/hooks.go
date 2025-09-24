@@ -10,9 +10,7 @@ import (
 	"github.com/cosmos/gaia/v24/x/liquid/types"
 )
 
-// Wrapper struct
-type Hooks struct {
-	k Keeper
+var (
 
 	//CONTRACT: assumes serial calling of hooks. (no parallel msg/tx/block processing)
 	// while staking(delegate) -> hooks are called in either of these orders:
@@ -22,7 +20,12 @@ type Hooks struct {
 	// BeforeDelegationModified -> BeforeDelegationRemoved
 	// BeforeDelegationModified -> AfterDelegationModified
 
-	predelegation *stakingtypes.Delegation
+	predelegation *stakingtypes.Delegation = nil
+)
+
+// Wrapper struct
+type Hooks struct {
+	k Keeper
 }
 
 var _ stakingtypes.StakingHooks = Hooks{}
@@ -30,8 +33,7 @@ var _ stakingtypes.StakingHooks = Hooks{}
 // Create new liquid hooks
 func (k Keeper) Hooks() Hooks {
 	return Hooks{
-		k:             k,
-		predelegation: nil,
+		k: k,
 	}
 }
 
@@ -51,11 +53,11 @@ func (h Hooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val
 
 func (h Hooks) BeforeDelegationCreated(_ context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if h.predelegation != nil {
+		if predelegation != nil {
 			return types.ErrPreHookIsNotNil
 		}
 
-		h.predelegation = &stakingtypes.Delegation{
+		predelegation = &stakingtypes.Delegation{
 			DelegatorAddress: delAddr.String(),
 			ValidatorAddress: valAddr.String(),
 			Shares:           sdkmath.LegacyZeroDec(),
@@ -66,7 +68,7 @@ func (h Hooks) BeforeDelegationCreated(_ context.Context, delAddr sdk.AccAddress
 
 func (h Hooks) BeforeDelegationSharesModified(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if h.predelegation != nil {
+		if predelegation != nil {
 			return types.ErrPreHookIsNotNil
 		}
 
@@ -74,29 +76,29 @@ func (h Hooks) BeforeDelegationSharesModified(ctx context.Context, delAddr sdk.A
 		if err != nil {
 			return err
 		}
-		h.predelegation = &predel
+		predelegation = &predel
 	}
 	return nil
 }
 
 func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if h.predelegation == nil {
+		if predelegation == nil {
 			return types.ErrPreHookIsNil
 		}
 		del, err := h.k.stakingKeeper.GetDelegation(ctx, delAddr, valAddr)
 		if err != nil {
 			return err
 		}
-		if del.Shares.GT(h.predelegation.Shares) {
+		if del.Shares.GT(predelegation.Shares) {
 			// is bonding
-			diffShares := del.Shares.Sub(h.predelegation.Shares)
+			diffShares := del.Shares.Sub(predelegation.Shares)
 			validator, err := h.k.stakingKeeper.GetValidator(ctx, valAddr)
 			if err != nil {
 				return err
 			}
 			diffTokens := validator.TokensFromSharesTruncated(del.Shares).TruncateInt().
-				Sub(validator.TokensFromSharesTruncated(h.predelegation.Shares).TruncateInt())
+				Sub(validator.TokensFromSharesTruncated(predelegation.Shares).TruncateInt())
 			if err := h.k.SafelyIncreaseTotalLiquidStakedTokens(ctx, diffTokens, true); err != nil {
 				return err
 			}
@@ -104,14 +106,14 @@ func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddre
 			if err != nil {
 				return err
 			}
-		} else if del.Shares.LT(h.predelegation.Shares) {
+		} else if del.Shares.LT(predelegation.Shares) {
 			// is unbonding
-			diffShares := h.predelegation.Shares.Sub(del.Shares)
+			diffShares := predelegation.Shares.Sub(del.Shares)
 			validator, err := h.k.stakingKeeper.GetValidator(ctx, valAddr)
 			if err != nil {
 				return err
 			}
-			diffTokens := validator.TokensFromSharesTruncated(h.predelegation.Shares).TruncateInt().
+			diffTokens := validator.TokensFromSharesTruncated(predelegation.Shares).TruncateInt().
 				Sub(validator.TokensFromSharesTruncated(del.Shares).TruncateInt())
 			if err := h.k.DecreaseTotalLiquidStakedTokens(ctx, diffTokens); err != nil {
 				return err
@@ -125,7 +127,7 @@ func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddre
 		}
 
 		// reset prehook
-		h.predelegation = nil
+		predelegation = nil
 	}
 	return nil
 }
@@ -167,7 +169,7 @@ func (h Hooks) AfterValidatorBeginUnbonding(_ context.Context, _ sdk.ConsAddress
 
 func (h Hooks) BeforeDelegationRemoved(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if h.predelegation == nil {
+		if predelegation == nil {
 			return types.ErrPreHookIsNil
 		}
 		// is unbonding.
@@ -175,17 +177,17 @@ func (h Hooks) BeforeDelegationRemoved(ctx context.Context, delAddr sdk.AccAddre
 		if err != nil {
 			return err
 		}
-		tokens := validator.TokensFromSharesTruncated(h.predelegation.Shares).TruncateInt()
+		tokens := validator.TokensFromSharesTruncated(predelegation.Shares).TruncateInt()
 		if err := h.k.DecreaseTotalLiquidStakedTokens(ctx, tokens); err != nil {
 			return err
 		}
-		_, err = h.k.DecreaseValidatorLiquidShares(ctx, valAddr, h.predelegation.Shares)
+		_, err = h.k.DecreaseValidatorLiquidShares(ctx, valAddr, predelegation.Shares)
 		if err != nil {
 			return err
 		}
 
 		// reset prehook
-		h.predelegation = nil
+		predelegation = nil
 	}
 	return nil
 }
