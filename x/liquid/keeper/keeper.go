@@ -69,7 +69,7 @@ func (k Keeper) GetAuthority() string {
 func (k Keeper) GetTransientHookDelegationData(ctx context.Context) (*stakingtypes.Delegation, error) {
 	tStore := k.tStoreService.OpenTransientStore(ctx)
 	delBz, err := tStore.Get(types.TransientHookDelegationDataPrefix)
-	if err != nil {
+	if err != nil || delBz == nil {
 		return nil, err
 	}
 	var del stakingtypes.Delegation

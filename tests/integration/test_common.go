@@ -59,6 +59,9 @@ func initFixture(tb testing.TB) *fixture {
 	keys := storetypes.NewKVStoreKeys(
 		authtypes.StoreKey, banktypes.StoreKey, distributiontypes.StoreKey, stakingtypes.StoreKey, liquidtypes.StoreKey,
 	)
+	tkeys := storetypes.NewTransientStoreKeys(
+		liquidtypes.TStoreKey,
+	)
 	cdc := moduletestutil.MakeTestEncodingConfig(auth.AppModuleBasic{}, staking.AppModuleBasic{}, vesting.AppModuleBasic{}).Codec
 
 	logger := log.NewTestLogger(tb)
@@ -103,7 +106,7 @@ func initFixture(tb testing.TB) *fixture {
 		addresscodec.NewBech32Codec(sdk.GetConfig().GetBech32ConsensusAddrPrefix()))
 	distributionKeeper := distributionkeeper.NewKeeper(cdc, runtime.NewKVStoreService(keys[distributiontypes.
 		StoreKey]), accountKeeper, bankKeeper, stakingKeeper, distributiontypes.ModuleName, authority.String())
-	liquidKeeper := liquidkeeper.NewKeeper(cdc, runtime.NewKVStoreService(keys[liquidtypes.StoreKey]), accountKeeper,
+	liquidKeeper := liquidkeeper.NewKeeper(cdc, runtime.NewKVStoreService(keys[liquidtypes.StoreKey]), runtime.NewTransientStoreService(tkeys[liquidtypes.TStoreKey]), accountKeeper,
 		bankKeeper, stakingKeeper, distributionKeeper, authority.String())
 
 	authModule := auth.NewAppModule(cdc, accountKeeper, authsims.RandomGenesisAccounts, nil)

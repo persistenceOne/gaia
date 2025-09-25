@@ -53,7 +53,7 @@ func (h Hooks) BeforeDelegationCreated(ctx context.Context, delAddr sdk.AccAddre
 		preDelegationChangeData, err := h.k.GetTransientHookDelegationData(ctx)
 		if err != nil || preDelegationChangeData != nil {
 			// ignore returning err for preDelegationChangeData as it might have been set and errored out
-			h.k.Logger(ctx).Error("%v: TransientKVStore if not empty, some actions might need cacheCtx usage %v, %v", types.ErrPreHookIsNotNil, preDelegationChangeData, err)
+			h.k.Logger(ctx).Error("transientKVStore if not empty, some actions might need cacheCtx usage", "error-type", types.ErrPreHookIsNotNil, "error", err, "delegation-data", preDelegationChangeData)
 		}
 
 		preDelegationChangeData = &stakingtypes.Delegation{
@@ -75,7 +75,7 @@ func (h Hooks) BeforeDelegationSharesModified(ctx context.Context, delAddr sdk.A
 		preDelegationChangeData, err := h.k.GetTransientHookDelegationData(ctx)
 		if err != nil || preDelegationChangeData != nil {
 			// ignore returning err for preDelegationChangeData as it might have been set and errored out
-			h.k.Logger(ctx).Error("%v: TransientKVStore if not empty, some actions might need cacheCtx usage %v, %v", types.ErrPreHookIsNotNil, preDelegationChangeData, err)
+			h.k.Logger(ctx).Error("transientKVStore if not empty, some actions might need cacheCtx usage", "error-type", types.ErrPreHookIsNotNil, "error", err, "delegation-data", preDelegationChangeData)
 		}
 
 		predel, err := h.k.stakingKeeper.GetDelegation(ctx, delAddr, valAddr)
