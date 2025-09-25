@@ -19,6 +19,8 @@ const (
 
 	// Prefix for module accounts that custodian tokenized shares
 	TokenizeShareModuleAccountPrefix = "tokenizeshare_"
+
+	TStoreKey = "transient_liquid"
 )
 
 var (
@@ -34,6 +36,8 @@ var (
 	TokenizeSharesLockPrefix           = []byte{0x6} // key for locking tokenize shares
 	TokenizeSharesUnlockQueuePrefix    = []byte{0x7} // key for the queue that unlocks tokenize shares
 	LiquidValidatorPrefix              = []byte{0x8} // key for liquid validator prefix
+
+	TransientHookDelegationDataPrefix = []byte{0x21}
 )
 
 // GetLiquidValidatorKey returns the key of the liquid validator.

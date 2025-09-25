@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	sdkerrors "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -10,18 +11,14 @@ import (
 	"github.com/cosmos/gaia/v24/x/liquid/types"
 )
 
-var (
-
-	//CONTRACT: assumes serial calling of hooks. (no parallel msg/tx/block processing)
-	// while staking(delegate) -> hooks are called in either of these orders:
-	// BeforeDelegationCreated -> AfterDelegationModified
-	// BeforeDelegationModified -> AfterDelegationModified
-	// while unstaking (undelegate) -> hooks are called either of these orders:
-	// BeforeDelegationModified -> BeforeDelegationRemoved
-	// BeforeDelegationModified -> AfterDelegationModified
-	// TODO move to transient store in keeper
-	predelegation *stakingtypes.Delegation = nil
-)
+// CONTRACT: types.TStoreyKey, for updating validator-liquid-share and total-liquid-tokens
+// Assumes synchronous calling of hooks. (no parallel msg/tx/block processing)
+// while staking(delegate) -> hooks are called in either of these orders:
+// BeforeDelegationCreated -> AfterDelegationModified
+// BeforeDelegationModified -> AfterDelegationModified
+// while unstaking (undelegate) -> hooks are called either of these orders:
+// BeforeDelegationModified -> BeforeDelegationRemoved
+// BeforeDelegationModified -> AfterDelegationModified
 
 // Wrapper struct
 type Hooks struct {
@@ -51,56 +48,70 @@ func (h Hooks) AfterValidatorRemoved(ctx context.Context, _ sdk.ConsAddress, val
 	return h.k.RemoveLiquidValidator(ctx, valAddr)
 }
 
-func (h Hooks) BeforeDelegationCreated(_ context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
+func (h Hooks) BeforeDelegationCreated(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		//if predelegation != nil {
-		//	return types.ErrPreHookIsNotNil
-		//}
-		// igore check for predelegation as it might have been set and errored out, can be added when the var is transient store
-		predelegation = &stakingtypes.Delegation{
+		preDelegationChangeData, err := h.k.GetTransientHookDelegationData(ctx)
+		if err != nil || preDelegationChangeData != nil {
+			// ignore returning err for preDelegationChangeData as it might have been set and errored out
+			h.k.Logger(ctx).Error("%v: TransientKVStore if not empty, some actions might need cacheCtx usage %v, %v", types.ErrPreHookIsNotNil, preDelegationChangeData, err)
+		}
+
+		preDelegationChangeData = &stakingtypes.Delegation{
 			DelegatorAddress: delAddr.String(),
 			ValidatorAddress: valAddr.String(),
 			Shares:           sdkmath.LegacyZeroDec(),
 		}
+		err = h.k.SetTransientHookDelegationData(ctx, preDelegationChangeData)
+		if err != nil {
+			return err
+		}
+
 	}
 	return nil
 }
 
 func (h Hooks) BeforeDelegationSharesModified(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		//if predelegation != nil {
-		//	return types.ErrPreHookIsNotNil
-		//}
-		// igore check for predelegation as it might have been set and errored out, can be added when the var is transient store
+		preDelegationChangeData, err := h.k.GetTransientHookDelegationData(ctx)
+		if err != nil || preDelegationChangeData != nil {
+			// ignore returning err for preDelegationChangeData as it might have been set and errored out
+			h.k.Logger(ctx).Error("%v: TransientKVStore if not empty, some actions might need cacheCtx usage %v, %v", types.ErrPreHookIsNotNil, preDelegationChangeData, err)
+		}
+
 		predel, err := h.k.stakingKeeper.GetDelegation(ctx, delAddr, valAddr)
 		if err != nil {
 			return err
 		}
-		predelegation = &predel
+		err = h.k.SetTransientHookDelegationData(ctx, &predel)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if predelegation == nil {
-			return types.ErrPreHookIsNil
+		preDelegationChangeData, err := h.k.GetTransientHookDelegationData(ctx)
+		if err != nil || preDelegationChangeData == nil {
+			return sdkerrors.Wrapf(types.ErrPreHookIsNil, "err: %v, transientStoreData is empty, expected non-nil value", err)
 		}
+
 		// reset prehook
-		defer func() { predelegation = nil }()
+		defer func() { _ = h.k.SetTransientHookDelegationData(ctx, preDelegationChangeData) }()
 		del, err := h.k.stakingKeeper.GetDelegation(ctx, delAddr, valAddr)
 		if err != nil {
 			return err
 		}
-		if del.Shares.GT(predelegation.Shares) {
+		if del.Shares.GT(preDelegationChangeData.Shares) {
 			// is bonding
-			diffShares := del.Shares.Sub(predelegation.Shares)
+			diffShares := del.Shares.Sub(preDelegationChangeData.Shares)
 			validator, err := h.k.stakingKeeper.GetValidator(ctx, valAddr)
 			if err != nil {
 				return err
 			}
 			diffTokens := validator.TokensFromSharesTruncated(del.Shares).TruncateInt().
-				Sub(validator.TokensFromSharesTruncated(predelegation.Shares).TruncateInt())
+				Sub(validator.TokensFromSharesTruncated(preDelegationChangeData.Shares).TruncateInt())
 			if err := h.k.SafelyIncreaseTotalLiquidStakedTokens(ctx, diffTokens, true); err != nil {
 				return err
 			}
@@ -108,14 +119,14 @@ func (h Hooks) AfterDelegationModified(ctx context.Context, delAddr sdk.AccAddre
 			if err != nil {
 				return err
 			}
-		} else if del.Shares.LT(predelegation.Shares) {
+		} else if del.Shares.LT(preDelegationChangeData.Shares) {
 			// is unbonding
-			diffShares := predelegation.Shares.Sub(del.Shares)
+			diffShares := preDelegationChangeData.Shares.Sub(del.Shares)
 			validator, err := h.k.stakingKeeper.GetValidator(ctx, valAddr)
 			if err != nil {
 				return err
 			}
-			diffTokens := validator.TokensFromSharesTruncated(predelegation.Shares).TruncateInt().
+			diffTokens := validator.TokensFromSharesTruncated(preDelegationChangeData.Shares).TruncateInt().
 				Sub(validator.TokensFromSharesTruncated(del.Shares).TruncateInt())
 			if err := h.k.DecreaseTotalLiquidStakedTokens(ctx, diffTokens); err != nil {
 				return err
@@ -168,27 +179,26 @@ func (h Hooks) AfterValidatorBeginUnbonding(_ context.Context, _ sdk.ConsAddress
 
 func (h Hooks) BeforeDelegationRemoved(ctx context.Context, delAddr sdk.AccAddress, valAddr sdk.ValAddress) error {
 	if h.k.DelegatorIsLiquidStaker(delAddr) {
-		if predelegation == nil {
-			return types.ErrPreHookIsNil
+		preDelegationChangeData, err := h.k.GetTransientHookDelegationData(ctx)
+		if err != nil || preDelegationChangeData == nil {
+			return sdkerrors.Wrapf(types.ErrPreHookIsNil, "err: %v, transientStoreData is empty, expected non-nil value", err)
 		}
+
 		// reset prehook
-		defer func() { predelegation = nil }()
+		defer func() { _ = h.k.SetTransientHookDelegationData(ctx, preDelegationChangeData) }()
 		// is unbonding.
 		validator, err := h.k.stakingKeeper.GetValidator(ctx, valAddr)
 		if err != nil {
 			return err
 		}
-		tokens := validator.TokensFromSharesTruncated(predelegation.Shares).TruncateInt()
+		tokens := validator.TokensFromSharesTruncated(preDelegationChangeData.Shares).TruncateInt()
 		if err := h.k.DecreaseTotalLiquidStakedTokens(ctx, tokens); err != nil {
 			return err
 		}
-		_, err = h.k.DecreaseValidatorLiquidShares(ctx, valAddr, predelegation.Shares)
+		_, err = h.k.DecreaseValidatorLiquidShares(ctx, valAddr, preDelegationChangeData.Shares)
 		if err != nil {
 			return err
 		}
-
-		// reset prehook
-		predelegation = nil
 	}
 	return nil
 }
